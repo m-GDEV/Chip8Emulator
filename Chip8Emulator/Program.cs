@@ -1,4 +1,7 @@
-﻿namespace Chip8Emulator;
+﻿using System.ComponentModel.DataAnnotations;
+using Raylib_cs;
+
+namespace Chip8Emulator;
 
 // Chip8 emulator following this guide:
 // https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
@@ -8,7 +11,7 @@ class Program
 
     // # of bytes = bits / 8
     byte[] Memory = new byte[4096];
-    byte[,] Display = new byte[8, 4];
+    bool[,] Display = new bool[32, 64];
     ushort ProgramCounter = 0x0200;
     Stack<ushort> ProgramStack = new Stack<ushort>();
     byte DelayTimer = 0x0000;
@@ -64,7 +67,7 @@ class Program
 
     #endregion
 
-    public static int _speedInCyclesPerSecond = 1;
+    public static int _speedInCyclesPerSecond = 5;
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
 
@@ -73,18 +76,47 @@ class Program
         Program emulator = new Program();
         emulator.Init();
         emulator.LoadProgram();
+        
+        Raylib.InitWindow(640, 320, "Chip8 Emulator");
 
         // Main Loop 
-        while (true)
+        while (!Raylib.WindowShouldClose())
         {
             emulator.FetchDecodeExecute();
             emulator.clockCyclesCompletedThisSecond += 1;
             emulator.clockCyclesCompletedTotal += 1;
-            //emulator.PrintByteArray(emulator.Memory);
-            emulator.DrawScreen();
-            Thread.Sleep(1 / _speedInCyclesPerSecond);
-            Console.ReadLine();
+
+            if (emulator.clockCyclesCompletedTotal % _speedInCyclesPerSecond == 0)
+            {
+                emulator.clockCyclesCompletedThisSecond = 0;
+            }
+            // emulator.DrawScreen();
+            
+            Raylib.BeginDrawing();
+            Raylib.ClearBackground(Color.White);
+
+            for (int i = 0; i < emulator.Display.GetLength(0); i++)
+            {
+                for (int j = 0; j < emulator.Display.GetLength(1); j++)
+                {
+                    if (emulator.Display[i, j])
+                    {
+                        for (int k = 0; k < 10; k++)
+                        {
+                            Raylib.DrawRectangle(j * 10, i * 10, 10, 10, Color.Black);
+                        }
+                    }
+                }
+            }
+        
+            Raylib.EndDrawing();
+            
+            Console.WriteLine(
+                $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | Clock Cycles Completed: {emulator.clockCyclesCompletedTotal}");
+            Thread.Sleep((int)(1000.0 / _speedInCyclesPerSecond));
         }
+        
+        Raylib.CloseWindow();
     }
 
     // Meta-Emulation Methods
@@ -104,7 +136,7 @@ class Program
         byte FirstInstructionByte = Memory[ProgramCounter];
         byte SecondInstructionByte = Memory[(ProgramCounter + 1)];
         // Theres some issue with the endianess or something so the order is reverse
-        ushort Instruction = BitConverter.ToUInt16(new byte[2] { SecondInstructionByte, FirstInstructionByte}, 0);
+        ushort Instruction = BitConverter.ToUInt16(new byte[2] { SecondInstructionByte, FirstInstructionByte }, 0);
         ProgramCounter += 2;
         Console.WriteLine($"Executing: {Instruction:X4}");
         // DECODE
@@ -116,10 +148,15 @@ class Program
         // Nibbles (4-bit num) are in bytes but masked off with AND 
         // so they should only occupy the first 4 bits
         // gotta shift cus you can get the mask but E0 is a big number even though there is a 0
-        byte nibbleOne   = (byte)((Instruction & 0xF000) >> 12); // First nibble (highest 4 bits)
-        byte nibbleTwo   = (byte)((Instruction & 0x0F00) >> 8);  // Second nibble
-        byte nibbleThree = (byte)((Instruction & 0x00F0) >> 4);  // Third nibble
-        byte nibbleFour  = (byte)(Instruction & 0x000F);        // Fourth nibble (lowest 4 bits)
+        byte nibbleOne = (byte)((Instruction & 0xF000) >> 12); // First nibble (highest 4 bits)
+        byte nibbleTwo = (byte)((Instruction & 0x0F00) >> 8); // Second nibble
+        byte nibbleThree = (byte)((Instruction & 0x00F0) >> 4); // Third nibble
+        byte nibbleFour = (byte)(Instruction & 0x000F); // Fourth nibble (lowest 4 bits)
+
+        // if (Instruction == 0)
+        // {
+        //     return;
+        // }
 
 
         // Nibble one tells us what kind of instruction this is
@@ -158,7 +195,7 @@ class Program
                 break;
             case 0x01:
                 // 0x1NNN (where N is variable: its a memory address)
-                ProgramCounter = (ushort)(nibbleTwo + nibbleThree + nibbleFour);
+                ProgramCounter = (ushort)((nibbleTwo << 8) | (nibbleThree << 4) | (nibbleFour));
                 break;
             case 0x02:
                 break;
@@ -209,19 +246,35 @@ class Program
                 break;
             case 0x0D:
                 // 0xDXYN:  Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
-                //byte[] bytesRead = [];
-                //for (int i = IndexRegister; i < IndexRegister + nibbleFour; i++)
-                //{
-                    //bytesRead[i] = Memory[i];
-                //}
-//
-                //byte VX = GetRegister(nibbleTwo);
-                //byte VY = GetRegister(nibbleThree);
+                var x = GetRegister(nibbleTwo);
+                var y = GetRegister(nibbleThree);
+                RegisterVF = 0;
 
-                Display[0, 0] = 1;
-                Display[0, 3] = 1;
-                Display[7, 0] = 1;
-                Display[7, 3] = 1;
+                for (int row = 0; row < nibbleFour; row++)
+                {
+                    byte spriteByte = Memory[IndexRegister + row];
+                    int pixelY = (y + row) % 32;
+
+                    for (int bit = 0; bit < 8; bit++)
+                    {
+                        int pixelX = (x + bit) % 64;
+                        // spriteByte >> (7 - bit) -> shift the desired bit to the right most posistion 
+                        // & 1 -> mask everything except that one bit 
+                        // == 1 -> convert the bit into a bool
+                        bool spritePixel = ((spriteByte >> (7 - bit)) & 1) == 1;
+
+                        if (spritePixel)
+                        {
+                            if (Display[pixelY, pixelX])
+                            {
+                                RegisterVF = 1;
+                            }
+
+                            // XOR the pixel (equivalent to Display[pixelY, pixelX] = Display[pixelY, pixelX] XOR 1
+                            Display[pixelY, pixelX] ^= true;
+                        }
+                    }
+                }
 
                 break;
             case 0x0E:
@@ -230,6 +283,7 @@ class Program
                 break;
             default:
                 throw new Exception("Your AND Mask Off did not work");
+                
         }
     }
 
@@ -265,14 +319,9 @@ class Program
         {
             for (int j = 0; j < Display.GetLength(1); j++)
             {
-                Console.Write("[");
-                bool[] bits = ByteToBits(Display[i, j]);
-                foreach (var bit in bits)
-                {
-                    Console.Write(bit ? "1" : "0");
-                }
-
-                Console.Write("]");
+                // Console.Write("[");
+                Console.Write(Display[i, j] ? "X" : "_");
+                // Console.Write("]");
             }
 
             Console.WriteLine();
@@ -304,7 +353,7 @@ class Program
         {
             for (int j = 0; j < Display.GetLength(1); j++)
             {
-                Display[i, j] = 0;
+                Display[i, j] = false;
             }
         }
     }
@@ -438,7 +487,6 @@ class Program
         }
 
         Console.WriteLine($"--- END {nameof(arr)} ---");
-        
     }
 
     public enum TimerType
