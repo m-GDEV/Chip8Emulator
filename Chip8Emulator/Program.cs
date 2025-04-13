@@ -16,7 +16,7 @@ class Program
     Stack<ushort> ProgramStack = new Stack<ushort>();
     byte DelayTimer = 0x0000;
     byte SoundTimer = 0x0000;
-    private static System.Timers.Timer mainTimer60hz;
+    KeyboardKey pressedKey;
 
     #region Registers
 
@@ -66,13 +66,45 @@ class Program
 
     #endregion
 
+    #region Chip 8 Key Mapping
+    Dictionary<KeyboardKey, byte> keymap = new()
+    {
+        // CHIP-8: 1 2 3 C       → Keyboard: 1 2 3 4
+        { KeyboardKey.One,   0x1 },
+        { KeyboardKey.Two,   0x2 },
+        { KeyboardKey.Three, 0x3 },
+        { KeyboardKey.Four,  0xC },
+
+        // CHIP-8: 4 5 6 D       → Keyboard: Q W E R
+        { KeyboardKey.Q,     0x4 },
+        { KeyboardKey.W,     0x5 },
+        { KeyboardKey.E,     0x6 },
+        { KeyboardKey.R,     0xD },
+
+        // CHIP-8: 7 8 9 E       → Keyboard: A S D F
+        { KeyboardKey.A,     0x7 },
+        { KeyboardKey.S,     0x8 },
+        { KeyboardKey.D,     0x9 },
+        { KeyboardKey.F,     0xE },
+
+        // CHIP-8: A 0 B F       → Keyboard: Z X C V
+        { KeyboardKey.Z,     0xA },
+        { KeyboardKey.X,     0x0 },
+        { KeyboardKey.C,     0xB },
+        { KeyboardKey.V,     0xF },
+    };
+    
+
     #endregion
 
-    public static int _speedInCyclesPerSecond = 100;
-    public static int _resolutionScale = 3;
+    #endregion
+
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
-
+    
+    public static int _speedInCyclesPerSecond = 1000;
+    private static System.Timers.Timer mainTimer60hz;
+    public static int _resolutionScale = 2;
     public static Sound beep;
 
     static void Main(string[] args)
@@ -91,6 +123,10 @@ class Program
         // Main Loop 
         while (!Raylib.WindowShouldClose())
         {
+            // We need to use a global variable for the currently pressed key 
+            // as it needs to happen in the Raylib loop. 
+            emulator.pressedKey = (KeyboardKey)Raylib.GetKeyPressed();
+            
             emulator.FetchDecodeExecute();
             
             // Update clock cycle counts
@@ -122,9 +158,10 @@ class Program
             }
             
             Raylib.EndDrawing();
-
+            
+            Console.Clear();
             Console.WriteLine(
-                $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | Clock Cycles Completed: {emulator.clockCyclesCompletedTotal}");
+                $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | Clock Cycles Completed: {emulator.clockCyclesCompletedTotal} | Instruction: {emulator.Memory[emulator.ProgramCounter - 2]}");
             Thread.Sleep((int)(1000.0 / _speedInCyclesPerSecond));
         }
 
@@ -156,7 +193,7 @@ class Program
         // Theres some issue with the endianess or something so the order is reverse
         ushort Instruction = BitConverter.ToUInt16(new byte[2] { SecondInstructionByte, FirstInstructionByte }, 0);
         ProgramCounter += 2;
-        Console.WriteLine($"Executing: {Instruction:X4}");
+        // Console.WriteLine($"Executing: {Instruction:X4}");
         // DECODE
         DecodeExecute(Instruction);
     }
@@ -553,15 +590,16 @@ class Program
 
                 if (nibbleThree == 0x0 && nibbleFour == 0xA)
                 {
-                    // 0xFX0A: Get key from user and blocks the thread, key value put into VX
-                    var key = 0;
-
-                    while (key == 0)
+                    // 0xFX0A: Get key from user, key value put into VX
+                    //         if no keys pressed, decrement program counter and re-run instruction
+                    if (keymap.TryGetValue(pressedKey, out byte chip8Key))
                     {
-                        key = Raylib.GetKeyPressed();
+                        SetRegister(nibbleTwo, chip8Key);
                     }
-                    
-                    SetRegister(nibbleTwo, (byte)(key));
+                    else
+                    {
+                        ProgramCounter -= 2;
+                    }
                 }
                 if (nibbleThree == 0x2 && nibbleFour == 0x9)
                 {
@@ -590,6 +628,24 @@ class Program
                     Memory[IndexRegister] = (byte)hundreds;
                     Memory[IndexRegister + 1] = (byte)tens;
                     Memory[IndexRegister + 2] = (byte)ones;
+                }
+
+                if (nibbleThree == 0x5 && nibbleFour == 0x5)
+                {
+                    // 0XFX55: takes values from V0 to VX and stores them successively in memory starting at Memory[IndexRegister]
+                    for (int i = 0; i <= nibbleTwo; i++)
+                    {
+                        Memory[IndexRegister + i] = GetRegister((byte)i);
+                    }
+                }
+                
+                if (nibbleThree == 0x6 && nibbleFour == 0x5)
+                {
+                    // 0XFX65: takes N values from Memory[IndexRegister] ... Memory[IndexRegister + N] and stores them successively in V0 - VN
+                    for (int i = 0; i <= nibbleTwo; i++)
+                    {
+                        SetRegister((byte)i, Memory[IndexRegister + i]);
+                    }
                 }
                 break;
             }
