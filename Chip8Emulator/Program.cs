@@ -102,7 +102,7 @@ class Program
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
     
-    public static int _speedInCyclesPerSecond = 1000;
+    public static int _speedInCyclesPerSecond = 10000;
     private static System.Timers.Timer mainTimer60hz;
     public static int _resolutionScale = 2;
     public static Sound beep;
@@ -161,7 +161,10 @@ class Program
             
             Console.Clear();
             Console.WriteLine(
-                $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | Clock Cycles Completed: {emulator.clockCyclesCompletedTotal} | Instruction: {emulator.Memory[emulator.ProgramCounter - 2]}");
+                $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | " +
+                $"Clock Cycles Completed: {emulator.clockCyclesCompletedTotal} | " +
+                $"Instruction: {emulator.Memory[emulator.ProgramCounter - 2]} | " +
+                $"Pressed Key {emulator.pressedKey}");
             Thread.Sleep((int)(1000.0 / _speedInCyclesPerSecond));
         }
 
