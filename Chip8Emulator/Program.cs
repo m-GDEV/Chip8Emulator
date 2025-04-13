@@ -1,5 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
-using Raylib_cs;
+﻿using Raylib_cs;
+using System.Timers;
 
 namespace Chip8Emulator;
 
@@ -16,6 +16,7 @@ class Program
     Stack<ushort> ProgramStack = new Stack<ushort>();
     byte DelayTimer = 0x0000;
     byte SoundTimer = 0x0000;
+    private static System.Timers.Timer mainTimer60hz;
 
     #region Registers
 
@@ -67,9 +68,12 @@ class Program
 
     #endregion
 
-    public static int _speedInCyclesPerSecond = 5;
+    public static int _speedInCyclesPerSecond = 100;
+    public static int _resolutionScale = 3;
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
+
+    public static Sound beep;
 
     static void Main(string[] args)
     {
@@ -77,12 +81,19 @@ class Program
         emulator.Init();
         emulator.LoadProgram();
         
-        Raylib.InitWindow(640, 320, "Chip8 Emulator");
+        // Raylib setup
+        Raylib.InitWindow(640 * _resolutionScale, 320 * _resolutionScale, "Chip8 Emulator");
+        Raylib.InitAudioDevice();
+        beep = Raylib.LoadSound("beep.wav");
+        Raylib.PlaySound(beep);
+        Raylib.SetTargetFPS(_speedInCyclesPerSecond);
 
         // Main Loop 
         while (!Raylib.WindowShouldClose())
         {
             emulator.FetchDecodeExecute();
+            
+            // Update clock cycle counts
             emulator.clockCyclesCompletedThisSecond += 1;
             emulator.clockCyclesCompletedTotal += 1;
 
@@ -90,8 +101,9 @@ class Program
             {
                 emulator.clockCyclesCompletedThisSecond = 0;
             }
-            // emulator.DrawScreen();
             
+            // Apply internal state of display to Raylib window
+            // Internal display is 64x32 so it is scaled accordingly for Raylib
             Raylib.BeginDrawing();
             Raylib.ClearBackground(Color.White);
 
@@ -103,19 +115,22 @@ class Program
                     {
                         for (int k = 0; k < 10; k++)
                         {
-                            Raylib.DrawRectangle(j * 10, i * 10, 10, 10, Color.Black);
+                            Raylib.DrawRectangle(j * 10 * _resolutionScale, i * 10 * _resolutionScale, 10 * _resolutionScale, 10 * _resolutionScale, Color.Black);
                         }
                     }
                 }
             }
-        
-            Raylib.EndDrawing();
             
+            Raylib.EndDrawing();
+
             Console.WriteLine(
                 $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | Clock Cycles Completed: {emulator.clockCyclesCompletedTotal}");
             Thread.Sleep((int)(1000.0 / _speedInCyclesPerSecond));
         }
-        
+
+        // Raylib de-init
+        Raylib.UnloadSound(beep);
+        Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
     }
 
@@ -127,6 +142,9 @@ class Program
         {
             Memory[i] = Font[i - 0x050];
         }
+        
+        // Start both Delay and Sound timers that run independently of the clock at 60hz
+        StartTimers();
     }
 
     void FetchDecodeExecute()
@@ -153,86 +171,261 @@ class Program
         byte nibbleThree = (byte)((Instruction & 0x00F0) >> 4); // Third nibble
         byte nibbleFour = (byte)(Instruction & 0x000F); // Fourth nibble (lowest 4 bits)
 
-        // if (Instruction == 0)
-        // {
-        //     return;
-        // }
-
-
         // Nibble one tells us what kind of instruction this is
         switch (nibbleOne)
         {
             case 0x00:
+            {
                 switch (nibbleTwo)
                 {
                     case 0x00:
+                    {
                         switch (nibbleThree)
                         {
                             case 0x0E:
+                            {
                                 switch (nibbleFour)
                                 {
                                     case 0x00:
+                                    {
                                         // 0x00E0
                                         ClearScreen();
                                         break;
+                                    }
+                                    case 0x0E:
+                                    {
+                                        // 0x00EE
+                                        ProgramCounter = ProgramStack.Pop();
+                                        break;
+                                    }
                                     default:
+                                    {
                                         ReportInvalidInstruction(Instruction);
                                         break;
+                                    }
                                 }
 
                                 break;
+                            }
                             default:
+                            {
                                 ReportInvalidInstruction(Instruction);
                                 break;
+                            }
                         }
 
                         break;
+                    }
                     default:
+                    {
                         ReportInvalidInstruction(Instruction);
                         break;
+                    }
                 }
 
                 break;
+            }
             case 0x01:
-                // 0x1NNN (where N is variable: its a memory address)
+            {
+                // 0x1NNN: Jump (Make program counter NNN)
                 ProgramCounter = (ushort)((nibbleTwo << 8) | (nibbleThree << 4) | (nibbleFour));
                 break;
+            }
             case 0x02:
+            {
+                // 0x2NNN: Call Subroutine (Make program counter NNN and save old PC to stack)
+                ProgramStack.Push(ProgramCounter);
+                ProgramCounter = (ushort)((nibbleTwo << 8) | (nibbleThree << 4) | (nibbleFour));
                 break;
+            }
             case 0x03:
+            {
+                // 0x3XNN: BCC (Do nothing or increment program counter if VX == NN)
+                byte nn = (byte)((nibbleThree << 4) | nibbleFour);
+                if (GetRegister(nibbleTwo) == nn)
+                {
+                    ProgramCounter += 2;
+                }
+
                 break;
+            }
             case 0x04:
+            {
+                // 0x3XNN: BCC (Do nothing or increment program counter if VX != NN)
+                byte nn2 = (byte)((nibbleThree << 4) | nibbleFour);
+                if (GetRegister(nibbleTwo) != nn2)
+                {
+                    ProgramCounter += 2;
+                }
+
                 break;
+            }
             case 0x05:
+            {
+                if (nibbleFour == 0)
+                {
+                    // 0x5XY0: BCC (Do nothing or increment program counter if VX == VY)
+                    if (GetRegister(nibbleTwo) == GetRegister(nibbleThree))
+                    {
+                        ProgramCounter += 2;
+                    }
+                }
+
                 break;
+            }
             case 0x06:
+            {
                 // 0x6XNN: Set Register VX to NN
-                if (nibbleTwo >= 0x0 && nibbleTwo <= 0xF)
-                {
-                    SetRegister(nibbleTwo, (byte)(nibbleThree + nibbleFour));
-                }
-
+                byte val = (byte)((nibbleThree << 4) | nibbleFour);
+                SetRegister(nibbleTwo, val);
                 break;
+            }
             case 0x07:
+            {
                 // 0x7XNN: Add NN to Register VX
-                if (nibbleTwo >= 0x0 && nibbleTwo <= 0xF)
+                byte currentRegisterVal = GetRegister(nibbleTwo);
+                byte valToAdd = (byte)((nibbleThree << 4) | nibbleFour);
+                SetRegister(nibbleTwo, (byte)(valToAdd + currentRegisterVal));
+
+                break;
+            }
+            case 0x08:
+            {
+                switch (nibbleFour)
                 {
-                    byte currentRegisterVal = GetRegister(nibbleTwo);
-                    byte valToAdd = (byte)(nibbleThree + nibbleFour);
-                    SetRegister(nibbleTwo, (byte)(valToAdd + currentRegisterVal));
+                    case 0x0:
+                    {
+                        // 0x8XY0: Set VX equal to VY
+                        SetRegister(nibbleTwo, GetRegister(nibbleThree));
+                        break;
+                    }
+                    case 0x1:
+                    {
+                        // 0x8XY1: Set VX equal to VX OR VY
+                        var vx = GetRegister(nibbleTwo);
+                        var vy = GetRegister(nibbleThree);
+                        SetRegister(nibbleTwo, (byte)(vx | vy));
+                        break;
+                    }
+                    case 0x2:
+                    {
+                        // 0x8XY2: Set VX equal to VX AND VY
+                        var vx = GetRegister(nibbleTwo);
+                        var vy = GetRegister(nibbleThree);
+                        SetRegister(nibbleTwo, (byte)(vx & vy));
+                        break;
+                    }
+                    case 0x3:
+                    {
+                        // 0x8XY3: Set VX equal to VX XOR VY
+                        var vx = GetRegister(nibbleTwo);
+                        var vy = GetRegister(nibbleThree);
+                        SetRegister(nibbleTwo, (byte)(vx ^ vy));
+                        break;
+                    }
+                    case 0x4:
+                    {
+                        // 0x8XY4: VX = VX + VY
+                        var vx = GetRegister(nibbleTwo);
+                        var vy = GetRegister(nibbleThree);
+                        var res = vx + vy;
+
+                        if (res > 255)
+                        {
+                            RegisterVF = 1; // Set carry flag
+                        }
+                        SetRegister(nibbleTwo, (byte)res);
+                        
+                        break;
+                    }
+                    case 0x5:
+                    {
+                        // 0x8XY5: VX = VX - VY
+                        var vx = GetRegister(nibbleTwo);
+                        var vy = GetRegister(nibbleThree);
+                        var res = vx - vy;
+
+                        if (vx > vy)
+                        {
+                            RegisterVF = 1; // Set borrow flag
+                        }
+                        SetRegister(nibbleTwo, (byte)res);
+                        
+                        break;
+                    }
+                    case 0x6:
+                    {
+                        // 0x8XY6: Right shift and set VF
+                        //     VX = VY (optional, disabled by default)
+                        //     Shift VX one bit right
+                        //     Set VF to 1 if the bit that was shifted was 1, or 0 if it was 0
+                        
+                        // SetRegister(nibbleTwo, GetRegister(nibbleThree));
+                        var vx = GetRegister(nibbleTwo);
+                        var bit = ByteToBits(vx)[0]; // LSB
+                        
+                        SetRegister(nibbleTwo, (byte) (vx >> 1));
+
+                        RegisterVF = bit ? (byte)1 : (byte)0;
+                        
+                        break;
+                    }
+                    case 0x7:
+                    {
+                        // 0x8XY5: VX = VY - VX
+                        var vx = GetRegister(nibbleTwo);
+                        var vy = GetRegister(nibbleThree);
+                        var res = vy - vx;
+
+                        if (vy > vx)
+                        {
+                            RegisterVF = 1; // Set borrow flag
+                        }
+                        SetRegister(nibbleTwo, (byte)res);
+                        
+                        break;
+                    }
+                    case 0xE:
+                    {
+                        // 0x8XYE: Left shift and set VF
+                        //     VX = VY (optional, disabled by default)
+                        //     Shift VX one bit left
+                        //     Set VF to 1 if the bit that was shifted was 1, or 0 if it was 0
+                        
+                        // SetRegister(nibbleTwo, GetRegister(nibbleThree));
+                        var vx = GetRegister(nibbleTwo);
+                        var bit = ByteToBits(vx)[7]; // MSB
+                        
+                        SetRegister(nibbleTwo, (byte) (vx << 1));
+
+                        RegisterVF = bit ? (byte)1 : (byte)0;
+                        
+                        break;
+                    }
                 }
 
                 break;
-            case 0x08:
-                break;
+            }
             case 0x09:
+            {
+                if (nibbleFour == 0)
+                {
+                    // 0x9XY0: BCC (Do nothing or increment program counter if VX != VY)
+                    if (GetRegister(nibbleTwo) != GetRegister(nibbleThree))
+                    {
+                        ProgramCounter += 2;
+                    }
+                }
+
                 break;
+            }
             case 0x0A:
+            {
                 // 0xANNN: Set index register to NNN
                 if (nibbleTwo >= 0x0 && nibbleTwo <= 0xF)
                 {
                     // this is how you compose a 16-bit number from 3 nibbles
-                    // note: nibbleTwo is shifted 8 bits and not 12 because the MSB is left
+                    // note: nibbleTwo is shifted 8 bits and not 12 because the most significant nibble is left
                     // blank as the index register practically only contains 12-bit values
                     // so we leave the first 4 bits blank
                     ushort valToSet = (ushort)((nibbleTwo << 8) | (nibbleThree << 4) | nibbleFour);
@@ -240,11 +433,34 @@ class Program
                 }
 
                 break;
+            }
             case 0x0B:
+            {
+                // BNNN / BXNN: Jump to V0 + NNN / Jump to VX + XNN 
+                
+                // Case 1 (default)
+                var num = (byte)((nibbleTwo << 8) | (nibbleThree << 4) | nibbleFour);
+                var v0 = GetRegister(0);
+                ProgramCounter = (byte)(num + v0);
+                // Case 2 (can be enabled, disabled by default)
+                // var num = (byte)((nibbleTwo << 8) | (nibbleThree << 4) | nibbleFour);
+                // var vx = GetRegister(nibbleTwo);
+                // ProgramCounter = (byte)(num + vx);
                 break;
+            }
             case 0x0C:
+            {
+                // CXNN: Generate random number, AND it with NN, and put result in VX
+                var num2 = (byte)((nibbleThree << 4) | nibbleFour); // NN
+                var r = new Random();
+                var num = r.Next(0, 255); // Possible numbers a byte can have (NN is two nibble AKA one byte)
+                var res = (byte)((byte)num ^ num2);
+                
+                SetRegister(nibbleTwo, res);
+            }
                 break;
             case 0x0D:
+            {
                 // 0xDXYN:  Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
                 var x = GetRegister(nibbleTwo);
                 var y = GetRegister(nibbleThree);
@@ -277,36 +493,133 @@ class Program
                 }
 
                 break;
+            }
             case 0x0E:
+            {
+                if (nibbleThree == 0x9 && nibbleFour == 0xE)
+                {
+                   // EX9E: Skip an instruction (increment PC by 2) if the value of the key being pressed is equal to VX
+                   var vx = GetRegister(nibbleTwo);
+                   var f = Raylib.GetKeyPressed();
+                   if (Raylib.GetKeyPressed() == vx)
+                   {
+                       ProgramCounter += 2;
+                   }
+                }
+                else if (nibbleThree == 0xA && nibbleFour == 0x1)
+                {
+                   // EXA1: Skip an instruction (increment PC by 2) if the value of the key being pressed is NOT equal to VX
+                   var vx = GetRegister(nibbleTwo);
+                   var f = Raylib.GetKeyPressed();
+                   if (Raylib.GetKeyPressed() != vx)
+                   {
+                       ProgramCounter += 2;
+                   }
+                }
+                else
+                {
+                    ReportInvalidInstruction(Instruction);
+                }
                 break;
+            }
             case 0x0F:
+            {
+                if (nibbleThree == 0x0 && nibbleFour == 0x7)
+                {
+                    // 0xFX07: VX = DelayTimer
+                    SetRegister(nibbleTwo, DelayTimer); 
+                }
+                if (nibbleThree == 0x1 && nibbleFour == 0x5)
+                {
+                    // 0xFX15: DelayTimer = VX
+                    DelayTimer = GetRegister(nibbleTwo);
+                }
+                if (nibbleThree == 0x1 && nibbleFour == 0x8)
+                {
+                    // 0xFX18: SoundTimer = VX
+                    SoundTimer = GetRegister(nibbleTwo);
+                }
+
+                if (nibbleThree == 0x1 && nibbleFour == 0xE)
+                {
+                    // 0xFX1E: Add IndexRegister += VX
+                    var vx = GetRegister(nibbleTwo);
+                    IndexRegister += vx; // idk what happens if it overflows (i.e. 0x1000, because its a 12bit addressable space)
+                    if (IndexRegister >= 0x1000)
+                    {
+                        RegisterVF = 1;
+                    }
+                }
+
+                if (nibbleThree == 0x0 && nibbleFour == 0xA)
+                {
+                    // 0xFX0A: Get key from user and blocks the thread, key value put into VX
+                    var key = 0;
+
+                    while (key == 0)
+                    {
+                        key = Raylib.GetKeyPressed();
+                    }
+                    
+                    SetRegister(nibbleTwo, (byte)(key));
+                }
+                if (nibbleThree == 0x2 && nibbleFour == 0x9)
+                {
+                    // 0xFX29: Set IndexRegister to address of the character of the least significant nibble of VX
+                    // The font begins in memory at 0x50 (by convention)
+                    // Each character of the font (0-F) is 5 bytes
+                    var vx = GetRegister(nibbleTwo);
+                    var val = (0x0F & vx);
+                    if (val < 0x0 || val > 0xF)
+                    {
+                        throw new Exception("Oopsie daisy");
+                    }
+
+                    IndexRegister = (byte)(0x50 + (5 * val));
+                }
+
+                if (nibbleThree == 0x3 && nibbleFour == 0x3)
+                {
+                    // 0xFX33: Take VX, convert it to decimal, place each digit (there are three) of the result 
+                    //         into memory at Memory[IndexRegister], Memory[IndexRegister + 1], and Memory[IndexRegister + 2]
+                    var vx = GetRegister(nibbleTwo);
+                    var hundreds= vx / 100; 
+                    var tens =(vx / 10) % 10;
+                    var ones = vx % 10;
+
+                    Memory[IndexRegister] = (byte)hundreds;
+                    Memory[IndexRegister + 1] = (byte)tens;
+                    Memory[IndexRegister + 2] = (byte)ones;
+                }
                 break;
+            }
             default:
+            {
                 throw new Exception("Your AND Mask Off did not work");
-                
+            }
         }
     }
 
-    void DecrementTimer(TimerType type)
+    void StartTimers()
     {
-        switch (type)
+        mainTimer60hz = new System.Timers.Timer(1000.0 / 60); // runs at 60hz 
+        mainTimer60hz.Enabled = true;
+        mainTimer60hz.Elapsed += TimerTick;
+        mainTimer60hz.AutoReset = true; 
+        mainTimer60hz.Start();
+    }
+
+    void TimerTick(object? send, ElapsedEventArgs e)
+    {
+        if (DelayTimer > 0)
         {
-            case TimerType.SoundTimer:
-                if (SoundTimer > 0)
-                {
-                    SoundTimer = (byte)(SoundTimer - 1);
-                }
+            DelayTimer = (byte)(DelayTimer - 1);
+        }
 
-                break;
-            case TimerType.DelayTimer:
-                if (DelayTimer > 0)
-                {
-                    DelayTimer = (byte)(DelayTimer - 1);
-                }
-
-                break;
-            default:
-                throw new Exception("Unknown Timer Type");
+        if (SoundTimer > 0)
+        {
+            SoundTimer = (byte)(SoundTimer - 1);
+            Raylib.PlaySound(beep);
         }
     }
 
@@ -363,56 +676,90 @@ class Program
         switch (registerNum)
         {
             case 0x0:
+            {
                 RegisterV0 = registerValue;
                 break;
+            }
             case 0x1:
+            {
                 RegisterV1 = registerValue;
                 break;
+            }
             case 0x2:
+            {
                 RegisterV2 = registerValue;
                 break;
+            }
             case 0x3:
+            {
                 RegisterV3 = registerValue;
                 break;
+            }
             case 0x4:
+            {
                 RegisterV4 = registerValue;
                 break;
+            }
             case 0x5:
+            {
                 RegisterV5 = registerValue;
                 break;
+            }
             case 0x6:
+            {
                 RegisterV6 = registerValue;
                 break;
+            }
             case 0x7:
+            {
                 RegisterV7 = registerValue;
                 break;
+            }
             case 0x8:
+            {
                 RegisterV8 = registerValue;
                 break;
+            }
             case 0x9:
+            {
                 RegisterV9 = registerValue;
                 break;
+            }
             case 0xA:
+            {
                 RegisterVA = registerValue;
                 break;
+            }
             case 0xB:
+            {
                 RegisterVB = registerValue;
                 break;
+            }
             case 0xC:
+            {
                 RegisterVC = registerValue;
                 break;
+            }
             case 0xD:
+            {
                 RegisterVD = registerValue;
                 break;
+            }
             case 0xE:
+            {
                 RegisterVE = registerValue;
                 break;
+            }
             case 0xF:
+            {
                 RegisterVF = registerValue;
                 break;
+            }
             default:
+            {
                 ReportInvalidInstruction();
                 break;
+            }
         }
     }
 
@@ -420,25 +767,75 @@ class Program
     {
         switch (registerNum)
         {
-            case 0x0: return RegisterV0;
-            case 0x1: return RegisterV1;
-            case 0x2: return RegisterV2;
-            case 0x3: return RegisterV3;
-            case 0x4: return RegisterV4;
-            case 0x5: return RegisterV5;
-            case 0x6: return RegisterV6;
-            case 0x7: return RegisterV7;
-            case 0x8: return RegisterV8;
-            case 0x9: return RegisterV9;
-            case 0xA: return RegisterVA;
-            case 0xB: return RegisterVB;
-            case 0xC: return RegisterVC;
-            case 0xD: return RegisterVD;
-            case 0xE: return RegisterVE;
-            case 0xF: return RegisterVF;
+            case 0x0:
+            {
+                return RegisterV0;
+            }
+            case 0x1:
+            {
+                return RegisterV1;
+            }
+            case 0x2:
+            {
+                return RegisterV2;
+            }
+            case 0x3:
+            {
+                return RegisterV3;
+            }
+            case 0x4:
+            {
+                return RegisterV4;
+            }
+            case 0x5:
+            {
+                return RegisterV5;
+            }
+            case 0x6:
+            {
+                return RegisterV6;
+            }
+            case 0x7:
+            {
+                return RegisterV7;
+            }
+            case 0x8:
+            {
+                return RegisterV8;
+            }
+            case 0x9:
+            {
+                return RegisterV9;
+            }
+            case 0xA:
+            {
+                return RegisterVA;
+            }
+            case 0xB:
+            {
+                return RegisterVB;
+            }
+            case 0xC:
+            {
+                return RegisterVC;
+            }
+            case 0xD:
+            {
+                return RegisterVD;
+            }
+            case 0xE:
+            {
+                return RegisterVE;
+            }
+            case 0xF:
+            {
+                return RegisterVF;
+            }
             default:
+            {
                 ReportInvalidInstruction();
                 return 0; // will never reach cus of exception
+            }
         }
     }
 
@@ -487,11 +884,5 @@ class Program
         }
 
         Console.WriteLine($"--- END {nameof(arr)} ---");
-    }
-
-    public enum TimerType
-    {
-        SoundTimer,
-        DelayTimer
     }
 }
