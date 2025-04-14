@@ -57,6 +57,8 @@ This is a simple Chip8 Emualtor written in .NET 9.0 with C#. All Chip8 instructi
 
 ![Demo](./docs/demo.png)
 
+> This is the emulator running the common 'IBM Logo' program
+
 ## Built With
 
 ![](https://img.shields.io/badge/.NET%209.0-512BD4?logo=.NET&logoColor=white)
