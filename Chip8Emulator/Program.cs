@@ -102,7 +102,7 @@ class Program
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
     
-    public static int _speedInCyclesPerSecond = 10000;
+    public static int _speedInCyclesPerSecond = 100;
     private static System.Timers.Timer mainTimer60hz;
     public static int _resolutionScale = 2;
     public static Sound beep;
