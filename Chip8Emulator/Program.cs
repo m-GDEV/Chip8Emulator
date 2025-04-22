@@ -66,52 +66,24 @@ class Program
 
     #endregion
 
-    #region Chip 8 Key Mapping
-    Dictionary<KeyboardKey, byte> keymap = new()
-    {
-        // CHIP-8: 1 2 3 C       → Keyboard: 1 2 3 4
-        { KeyboardKey.One,   0x1 },
-        { KeyboardKey.Two,   0x2 },
-        { KeyboardKey.Three, 0x3 },
-        { KeyboardKey.Four,  0xC },
-
-        // CHIP-8: 4 5 6 D       → Keyboard: Q W E R
-        { KeyboardKey.Q,     0x4 },
-        { KeyboardKey.W,     0x5 },
-        { KeyboardKey.E,     0x6 },
-        { KeyboardKey.R,     0xD },
-
-        // CHIP-8: 7 8 9 E       → Keyboard: A S D F
-        { KeyboardKey.A,     0x7 },
-        { KeyboardKey.S,     0x8 },
-        { KeyboardKey.D,     0x9 },
-        { KeyboardKey.F,     0xE },
-
-        // CHIP-8: A 0 B F       → Keyboard: Z X C V
-        { KeyboardKey.Z,     0xA },
-        { KeyboardKey.X,     0x0 },
-        { KeyboardKey.C,     0xB },
-        { KeyboardKey.V,     0xF },
-    };
-    
-
-    #endregion
-
     #endregion
 
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
     
-    public static int _speedInCyclesPerSecond = 100;
-    private static System.Timers.Timer mainTimer60hz;
+    public static int _speedInCyclesPerSecond = 10000;
     public static int _resolutionScale = 2;
     public static Sound beep;
+    
+    // Timers
+    private static System.Timers.Timer mainTimer60hz;
+    private static System.Timers.Timer cpuTimer;
 
     static void Main(string[] args)
     {
         Program emulator = new Program();
-        emulator.Init();
         emulator.LoadProgram();
+        emulator.Init();
         
         // Raylib setup
         Raylib.InitWindow(640 * _resolutionScale, 320 * _resolutionScale, "Chip8 Emulator");
@@ -119,25 +91,19 @@ class Program
         beep = Raylib.LoadSound("beep.wav");
         Raylib.PlaySound(beep);
         Raylib.SetTargetFPS(_speedInCyclesPerSecond);
-
-        // Main Loop 
+        
+        // Display
         while (!Raylib.WindowShouldClose())
         {
             // We need to use a global variable for the currently pressed key 
             // as it needs to happen in the Raylib loop. 
-            emulator.pressedKey = (KeyboardKey)Raylib.GetKeyPressed();
-            
-            emulator.FetchDecodeExecute();
-            
-            // Update clock cycle counts
-            emulator.clockCyclesCompletedThisSecond += 1;
-            emulator.clockCyclesCompletedTotal += 1;
-
-            if (emulator.clockCyclesCompletedTotal % _speedInCyclesPerSecond == 0)
+            // also, if the user is continuing to hold a key down, keep
+            // that as the currently pressedKey
+            if (!Raylib.IsKeyDown(emulator.pressedKey))
             {
-                emulator.clockCyclesCompletedThisSecond = 0;
+                emulator.pressedKey = (KeyboardKey)Raylib.GetKeyPressed();
             }
-            
+
             // Apply internal state of display to Raylib window
             // Internal display is 64x32 so it is scaled accordingly for Raylib
             Raylib.BeginDrawing();
@@ -151,23 +117,18 @@ class Program
                     {
                         for (int k = 0; k < 10; k++)
                         {
-                            Raylib.DrawRectangle(j * 10 * _resolutionScale, i * 10 * _resolutionScale, 10 * _resolutionScale, 10 * _resolutionScale, Color.Black);
+                            Raylib.DrawRectangle(j * 10 * _resolutionScale, i * 10 * _resolutionScale,
+                                10 * _resolutionScale, 10 * _resolutionScale, Color.Black);
                         }
                     }
                 }
             }
-            
+
             Raylib.EndDrawing();
-            
-            Console.Clear();
-            Console.WriteLine(
-                $"Clock Cycle (this second): {emulator.clockCyclesCompletedThisSecond} | " +
-                $"Clock Cycles Completed: {emulator.clockCyclesCompletedTotal} | " +
-                $"Instruction: {emulator.Memory[emulator.ProgramCounter - 2]} | " +
-                $"Pressed Key {emulator.pressedKey}");
-            Thread.Sleep((int)(1000.0 / _speedInCyclesPerSecond));
+            Thread.Sleep((int) (1000.0 / 60));
         }
 
+            
         // Raylib de-init
         Raylib.UnloadSound(beep);
         Raylib.CloseAudioDevice();
@@ -182,9 +143,58 @@ class Program
         {
             Memory[i] = Font[i - 0x050];
         }
+       
+        // Start timers
+        mainTimer60hz = new System.Timers.Timer(1000.0 / 60); // runs at 60hz 
+        mainTimer60hz.Enabled = true;
+        mainTimer60hz.Elapsed += MainTimerTick;
+        mainTimer60hz.AutoReset = true; 
+        mainTimer60hz.Start();
         
-        // Start both Delay and Sound timers that run independently of the clock at 60hz
-        StartTimers();
+        cpuTimer = new System.Timers.Timer(1000.0 / _speedInCyclesPerSecond); // runs at 60hz 
+        cpuTimer.Enabled = true;
+        cpuTimer.Elapsed += CpuTimerTick;
+        cpuTimer.AutoReset = true; 
+        cpuTimer.Start();
+    }
+
+    void CpuTimerTick(object? send, ElapsedEventArgs e)
+    {
+        FetchDecodeExecute();
+        
+        // Update clock cycle counts
+        clockCyclesCompletedThisSecond += 1;
+        clockCyclesCompletedTotal += 1;
+
+        if (clockCyclesCompletedTotal % _speedInCyclesPerSecond == 0)
+        {
+            clockCyclesCompletedThisSecond = 0;
+        }
+        
+        Console.Clear();
+        Console.WriteLine(
+            $"Clock Cycle (this second): {clockCyclesCompletedThisSecond} | " +
+            $"Clock Cycles Completed: {clockCyclesCompletedTotal} | " +
+            $"Instruction: 0x{Memory[ProgramCounter - 2]:X}{Memory[ProgramCounter -1]:X} | " +
+            $"Pressed Key {pressedKey}");
+    }
+    
+    // Display, sound, and delay timers all run a 60hz
+    void MainTimerTick(object? send, ElapsedEventArgs e)
+    {
+        
+        // Delay Timer
+        if (DelayTimer > 0)
+        {
+            DelayTimer = (byte)(DelayTimer - 1);
+        }
+    
+        // Sound Timer
+        if (SoundTimer > 0)
+        {
+            SoundTimer = (byte)(SoundTimer - 1);
+            Raylib.PlaySound(beep);
+        }
     }
 
     void FetchDecodeExecute()
@@ -345,6 +355,7 @@ class Program
                         var vx = GetRegister(nibbleTwo);
                         var vy = GetRegister(nibbleThree);
                         SetRegister(nibbleTwo, (byte)(vx | vy));
+                        RegisterVF = 0; // Set carry to 0 for logical operation
                         break;
                     }
                     case 0x2:
@@ -353,6 +364,7 @@ class Program
                         var vx = GetRegister(nibbleTwo);
                         var vy = GetRegister(nibbleThree);
                         SetRegister(nibbleTwo, (byte)(vx & vy));
+                        RegisterVF = 0; // Set carry to 0 for logical operation
                         break;
                     }
                     case 0x3:
@@ -361,6 +373,7 @@ class Program
                         var vx = GetRegister(nibbleTwo);
                         var vy = GetRegister(nibbleThree);
                         SetRegister(nibbleTwo, (byte)(vx ^ vy));
+                        RegisterVF = 0; // Set carry to 0 for logical operation
                         break;
                     }
                     case 0x4:
@@ -531,8 +544,8 @@ class Program
                 {
                    // EX9E: Skip an instruction (increment PC by 2) if the value of the key being pressed is equal to VX
                    var vx = GetRegister(nibbleTwo);
-                   var f = Raylib.GetKeyPressed();
-                   if (Raylib.GetKeyPressed() == vx)
+                   KeyboardKey key = MapKeyToRaylibKeyboardKey(vx);
+                   if (key == pressedKey)
                    {
                        ProgramCounter += 2;
                    }
@@ -541,8 +554,8 @@ class Program
                 {
                    // EXA1: Skip an instruction (increment PC by 2) if the value of the key being pressed is NOT equal to VX
                    var vx = GetRegister(nibbleTwo);
-                   var f = Raylib.GetKeyPressed();
-                   if (Raylib.GetKeyPressed() != vx)
+                   KeyboardKey key = MapKeyToRaylibKeyboardKey(vx);
+                   if (key != pressedKey)
                    {
                        ProgramCounter += 2;
                    }
@@ -586,9 +599,9 @@ class Program
                 {
                     // 0xFX0A: Get key from user, key value put into VX
                     //         if no keys pressed, decrement program counter and re-run instruction
-                    if (keymap.TryGetValue(pressedKey, out byte chip8Key))
+                    if (pressedKey != KeyboardKey.Null)
                     {
-                        SetRegister(nibbleTwo, chip8Key);
+                        SetRegister(nibbleTwo, MapRaylibKeyboardKeyToByte(pressedKey));
                     }
                     else
                     {
@@ -650,28 +663,6 @@ class Program
         }
     }
 
-    void StartTimers()
-    {
-        mainTimer60hz = new System.Timers.Timer(1000.0 / 60); // runs at 60hz 
-        mainTimer60hz.Enabled = true;
-        mainTimer60hz.Elapsed += TimerTick;
-        mainTimer60hz.AutoReset = true; 
-        mainTimer60hz.Start();
-    }
-
-    void TimerTick(object? send, ElapsedEventArgs e)
-    {
-        if (DelayTimer > 0)
-        {
-            DelayTimer = (byte)(DelayTimer - 1);
-        }
-
-        if (SoundTimer > 0)
-        {
-            SoundTimer = (byte)(SoundTimer - 1);
-            Raylib.PlaySound(beep);
-        }
-    }
 
     // IO Methods
     void DrawScreen()
@@ -934,5 +925,63 @@ class Program
         }
 
         Console.WriteLine($"--- END {nameof(arr)} ---");
+    }
+   
+    // Given a nibble, return which KeyboardKey it represents
+    KeyboardKey MapKeyToRaylibKeyboardKey(byte key)
+    {
+        return key switch
+        {
+            0x1 => KeyboardKey.One,     // 0x1 → 1
+            0x2 => KeyboardKey.Two,     // 0x2 → 2
+            0x3 => KeyboardKey.Three,     // 0x3 → 3
+            0xC => KeyboardKey.Four,     // 0xC → Z
+            
+            0x4 => KeyboardKey.Q,     // 0x4 → Q
+            0x5 => KeyboardKey.W,     // 0x5 → W
+            0x6 => KeyboardKey.E,     // 0x6 → E
+            0xD => KeyboardKey.R,     // 0xD → X
+            
+            0x7 => KeyboardKey.A,     // 0x7 → R
+            0x8 => KeyboardKey.S,     // 0x8 → A
+            0x9 => KeyboardKey.D,     // 0x9 → S
+            0xE => KeyboardKey.F,     // 0xE → C
+            
+            0xA => KeyboardKey.Z,     // 0xA → D
+            0x0 => KeyboardKey.Zero,     // 0x0 → X
+            0xB => KeyboardKey.X,     // 0xB → F
+            0xF => KeyboardKey.V,     // 0xF → V
+            
+            _ => KeyboardKey.Null     // Handle any invalid key
+        };
+    }
+    
+    // Inverse of above
+    byte MapRaylibKeyboardKeyToByte(KeyboardKey key)
+    {
+        return key switch
+        {
+            KeyboardKey.One  => 0x1,    // 1
+            KeyboardKey.Two  => 0x2,    // 2
+            KeyboardKey.Three  => 0x3,    // 3
+            KeyboardKey.Four  => 0xC,    // Z
+            
+            KeyboardKey.Q => 0x4,    // Q
+            KeyboardKey.W => 0x5,    // W
+            KeyboardKey.E => 0x6,    // E
+            KeyboardKey.R => 0xD,    // X
+            
+            KeyboardKey.A  => 0x7,    // R
+            KeyboardKey.S => 0x8,    // A
+            KeyboardKey.D => 0x9,    // S
+            KeyboardKey.F => 0xE,    // C
+            
+            KeyboardKey.Z  => 0xA,    // D
+            KeyboardKey.X => 0x0,    // X
+            KeyboardKey.C => 0xB,    // F
+            KeyboardKey.V => 0xF,    // V
+            
+            _ => 0xFF           // Invalid key, return 0xFF or any fallback value
+        };
     }
 }
