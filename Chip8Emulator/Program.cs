@@ -71,7 +71,9 @@ class Program
     public int clockCyclesCompletedThisSecond = 0;
     public int clockCyclesCompletedTotal = 0;
     
-    public static int _speedInCyclesPerSecond = 10000;
+    public static int _framesPerSecond = 60;
+    // 1000 cycles per frame
+    public static int _speedInCyclesPerSecond = 1000 * _framesPerSecond;
     public static int _resolutionScale = 2;
     public static Sound beep;
     
@@ -92,7 +94,7 @@ class Program
         var path = Path.Combine("..", "..", "..", "..", "assets", "beep.wav");
         beep = Raylib.LoadSound(path);
         Raylib.PlaySound(beep);
-        Raylib.SetTargetFPS(60);
+        Raylib.SetTargetFPS(_speedInCyclesPerSecond);
         
         // Display
         while (!Raylib.WindowShouldClose())
@@ -109,7 +111,7 @@ class Program
             // Apply internal state of display to Raylib window
             // Internal display is 64x32 so it is scaled accordingly for Raylib
             Raylib.BeginDrawing();
-            Raylib.ClearBackground(Color.White);
+            Raylib.ClearBackground(Color.Black);
 
             for (int i = 0; i < emulator.Display.GetLength(0); i++)
             {
@@ -120,14 +122,14 @@ class Program
                         for (int k = 0; k < 10; k++)
                         {
                             Raylib.DrawRectangle(j * 10 * _resolutionScale, i * 10 * _resolutionScale,
-                                10 * _resolutionScale, 10 * _resolutionScale, Color.Black);
+                                10 * _resolutionScale, 10 * _resolutionScale, Color.Red);
                         }
                     }
                 }
             }
 
             Raylib.EndDrawing();
-            Thread.Sleep((int) (1000.0 / 60));
+            Thread.Sleep((int) (1000.0 / _framesPerSecond));
         }
 
             
@@ -147,13 +149,13 @@ class Program
         }
        
         // Start timers
-        mainTimer60hz = new System.Timers.Timer(1000.0 / 60); // runs at 60hz 
+        mainTimer60hz = new System.Timers.Timer( (1000.0 / 60)); // runs at 60hz 
         mainTimer60hz.Enabled = true;
         mainTimer60hz.Elapsed += MainTimerTick;
         mainTimer60hz.AutoReset = true; 
         mainTimer60hz.Start();
         
-        cpuTimer = new System.Timers.Timer(1000.0 / _speedInCyclesPerSecond); // runs at 60hz 
+        cpuTimer = new System.Timers.Timer((1000.0 / _speedInCyclesPerSecond));
         cpuTimer.Enabled = true;
         cpuTimer.Elapsed += CpuTimerTick;
         cpuTimer.AutoReset = true; 
