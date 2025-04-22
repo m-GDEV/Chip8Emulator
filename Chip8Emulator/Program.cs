@@ -370,11 +370,8 @@ class Program
                         var vy = GetRegister(nibbleThree);
                         var res = vx + vy;
 
-                        if (res > 255)
-                        {
-                            RegisterVF = 1; // Set carry flag
-                        }
                         SetRegister(nibbleTwo, (byte)res);
+                        RegisterVF = res > 255 ? (byte)1 : (byte) 0; // Set carry flag
                         
                         break;
                     }
@@ -385,11 +382,8 @@ class Program
                         var vy = GetRegister(nibbleThree);
                         var res = vx - vy;
 
-                        if (vx > vy)
-                        {
-                            RegisterVF = 1; // Set borrow flag
-                        }
                         SetRegister(nibbleTwo, (byte)res);
+                        RegisterVF = vx >= vy ? (byte)1 : (byte)0; // Set borrow flag
                         
                         break;
                     }
@@ -417,11 +411,8 @@ class Program
                         var vy = GetRegister(nibbleThree);
                         var res = vy - vx;
 
-                        if (vy > vx)
-                        {
-                            RegisterVF = 1; // Set borrow flag
-                        }
                         SetRegister(nibbleTwo, (byte)res);
+                        RegisterVF = vy >= vx ? (byte)1 : (byte)0; // Set borrow flag
                         
                         break;
                     }
