@@ -88,9 +88,11 @@ class Program
         // Raylib setup
         Raylib.InitWindow(640 * _resolutionScale, 320 * _resolutionScale, "Chip8 Emulator");
         Raylib.InitAudioDevice();
-        beep = Raylib.LoadSound("beep.wav");
+        // Messy but works
+        var path = Path.Combine("..", "..", "..", "..", "assets", "beep.wav");
+        beep = Raylib.LoadSound(path);
         Raylib.PlaySound(beep);
-        Raylib.SetTargetFPS(_speedInCyclesPerSecond);
+        Raylib.SetTargetFPS(60);
         
         // Display
         while (!Raylib.WindowShouldClose())
@@ -948,8 +950,8 @@ class Program
             0xE => KeyboardKey.F,     // 0xE → C
             
             0xA => KeyboardKey.Z,     // 0xA → D
-            0x0 => KeyboardKey.Zero,     // 0x0 → X
-            0xB => KeyboardKey.X,     // 0xB → F
+            0x0 => KeyboardKey.X,     // 0x0 → X
+            0xB => KeyboardKey.C,     // 0xB → F
             0xF => KeyboardKey.V,     // 0xF → V
             
             _ => KeyboardKey.Null     // Handle any invalid key
